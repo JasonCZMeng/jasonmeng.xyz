@@ -33,7 +33,9 @@ html, body { background: var(--list-bg); color: var(--list-fg); font-family: var
 
 /* Wing flap and plane beacon */
 .bird { transform-box: fill-box; transform-origin: center; animation: flap 0.7s ease-in-out infinite alternate; }
-@keyframes flap { to { transform: scaleY(-0.5); } }
+@keyframes flap { 0% { transform: scaleY(1); } 60% { transform: scaleY(-0.55) scaleX(0.9); } 100% { transform: scaleY(0.8); } }
 .beacon { animation: beacon 1.2s steps(1) infinite; }
+.strobe { opacity: 0; animation: strobe 1.6s infinite; }
+@keyframes strobe { 0%, 6% { opacity: 1; } 7%, 100% { opacity: 0; } }
 @keyframes beacon { 50% { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .bird, .beacon { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .bird, .beacon, .strobe { animation: none; } }

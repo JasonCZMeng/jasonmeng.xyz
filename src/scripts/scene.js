@@ -124,11 +124,17 @@ const LAYERS = [
 const TITLE_AFTER = 1
 
 // A small flock crossing during midday → golden hour, and a plane crossing during sunset → dusk.
-const BIRDS = [[0, 0], [-34, 14], [-30, -16], [-66, 26], [-60, -30], [-98, 6]]
-const bird = (x, y, s, d) =>
-  `<g transform="translate(${x} ${y}) scale(${s})"><path class="bird" style="animation-delay:${d}s" d="M-9 0Q-4 -6 0 0Q4 -6 9 0Q4 -3 0 2Q-4 -3 -9 0Z"/></g>`
-const PLANE = `<g data-plane><path d="M0 0h70l12-9h7l-6 11h-83z"/><path d="M26 -1h18l-12-16h-6z"/><path d="M30 3h16l-10 11h-6z"/>
-  <path d="M-10 1h-260" stroke="currentColor" stroke-width="2" opacity=".35"/><circle class="beacon" cx="84" cy="-4" r="2.4" fill="#ff5a4e"/></g>`
+// Formation offsets; each bird also gets its own size, flap speed and drift phase.
+const BIRDS = [[0, 0], [-34, 14], [-30, -16], [-66, 26], [-60, -30], [-98, 6], [-120, -18]].map(([x, y], i) => ({
+  x: x * 1.8, y: y * 1.8, s: 1.9 + ((i * 7) % 5) * 0.12, flap: (0.42 + ((i * 3) % 5) * 0.07).toFixed(2), phase: i * 1.37,
+}))
+const bird = (b, i) =>
+  `<g data-bird="${i}"><path class="bird" style="animation-duration:${b.flap}s;animation-delay:-${(b.phase % 1).toFixed(2)}s" d="M-9 0Q-4 -6 0 0Q4 -6 9 0Q4 -3 0 2Q-4 -3 -9 0Z"/></g>`
+// Airliner facing left (nose at x 0, tail fin at the right). The trail streams out behind the tail.
+const PLANE = `<g data-plane>
+  <path data-trail d="M92 1H92" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <g data-body><path d="M0 0q2-4 10-4h60l12-9h7l-6 11v4h-80q-3 0-3-2z"/><path d="M26 -1h18l-12-16h-6z"/><path d="M30 3h16l-10 11h-6z"/>
+  <circle class="beacon" cx="86" cy="-10" r="2.4" fill="#ff5a4e"/><circle class="strobe" cx="36" cy="13" r="1.8" fill="#ffffff"/></g></g>`
 const span = (p, a, b) => Math.min(1, Math.max(0, (p - a) / (b - a)))
 
 export function initScene(root) {
@@ -150,7 +156,7 @@ export function initScene(root) {
     <circle data-sun/>
   </svg></div>`
   html += `<div class="layer" data-lag="0.9">${svgOpen}
-    <g data-birds>${BIRDS.map(([x, y], i) => bird(x * 1.8, y * 1.8, 2 + (i % 3) * 0.3, (i * 0.13).toFixed(2))).join('')}</g>
+    <g data-birds>${BIRDS.map(bird).join('')}</g>
     ${PLANE}
   </svg></div>`
   LAYERS.forEach((l, i) => {
@@ -169,7 +175,11 @@ export function initScene(root) {
   const starG = stage.querySelector('[data-stars]')
   const movers = [...stage.querySelectorAll('[data-lag]')]
   const birds = stage.querySelector('[data-birds]')
+  const birdEls = [...stage.querySelectorAll('[data-bird]')]
   const plane = stage.querySelector('[data-plane]')
+  const planeBody = stage.querySelector('[data-body]')
+  const trail = stage.querySelector('[data-trail]')
+  let progress = 0
   const lights = [...stage.querySelectorAll('[data-at]')].map((el) => [el, Number(el.dataset.at)])
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -192,16 +202,11 @@ export function initScene(root) {
     glow.setAttribute('cy', s.sunY); glow.setAttribute('cx', s.sunX); sun.setAttribute('cx', s.sunX)
     starG.setAttribute('opacity', s.stars)
     // Birds: left → right with a gentle rise, p 0.05–0.5
-    const b = span(p, 0.05, 0.5)
-    birds.setAttribute('transform', `translate(${(-150 + b * 1900).toFixed(1)} ${(400 - b * 90 + Math.sin(b * 9) * 14).toFixed(1)})`)
+    progress = p
     birds.setAttribute('fill', mix(s.near, s.far, 0.25))
-    birds.style.opacity = b > 0 && b < 1 ? 1 : 0
-    // Plane: right → left, high, p 0.45–0.98; its beacon shows against the darkening sky
-    const pl = span(p, 0.45, 0.98)
-    plane.setAttribute('transform', `translate(${(1750 - pl * 2100).toFixed(1)} ${(70 - pl * 30).toFixed(1)}) scale(-1.4 1.4)`)
     plane.setAttribute('fill', mix(s.near, s.far, 0.35))
     plane.style.color = s.skyBot
-    plane.style.opacity = pl > 0 && pl < 1 ? 1 : 0
+    if (reduced) animate(0)
     // Lights switch on one by one through dusk
     for (const [el, at] of lights) el.setAttribute('opacity', Math.min(1, Math.max(0, (p - at) / 0.03)).toFixed(2))
     root.style.setProperty('--title', s.title)
@@ -209,6 +214,47 @@ export function initScene(root) {
     root.style.setProperty('--near', s.near)
     if (!reduced) for (const m of movers) m.style.transform = `translate3d(0, ${(exit * Number(m.dataset.lag)).toFixed(1)}px, 0)`
   }
+  // Birds and plane: scroll sets where they are along their path; time keeps them moving in place.
+  function animate(now) {
+    const t = now / 1000
+    const p = progress
+    // Flock crosses left → right during midday → golden hour, and creeps forward on its own
+    const b = span(p, 0.05, 0.5)
+    const fx = -150 + b * 1900 + (reduced ? 0 : Math.sin(t * 0.25) * 30)
+    const fy = 400 - b * 90 + Math.sin(b * 9) * 14
+    const spread = 1 + Math.sin(t * 0.6) * 0.12
+    birds.style.opacity = b > 0 && b < 1 ? 1 : 0
+    BIRDS.forEach((bd, i) => {
+      const bob = reduced ? 0 : Math.sin(t * 1.6 + bd.phase) * 6
+      const sway = reduced ? 0 : Math.sin(t * 0.9 + bd.phase * 0.7) * 8
+      const tilt = reduced ? 0 : Math.cos(t * 1.6 + bd.phase) * 9
+      birdEls[i].setAttribute('transform', `translate(${(fx + bd.x * spread + sway).toFixed(1)} ${(fy + bd.y * spread + bob).toFixed(1)}) rotate(${tilt.toFixed(1)}) scale(${bd.s})`)
+    })
+    // Plane crosses right → left, nose first, during sunset → dusk; gentle bob and bank, growing trail
+    const pl = span(p, 0.45, 0.98)
+    const px = 1750 - pl * 2100
+    const py = 70 - pl * 30 + (reduced ? 0 : Math.sin(t * 0.8) * 4)
+    const bank = reduced ? 0 : Math.sin(t * 0.5) * 2.5
+    plane.setAttribute('transform', `translate(${px.toFixed(1)} ${py.toFixed(1)}) scale(1.4)`)
+    planeBody.setAttribute('transform', `rotate(${bank.toFixed(2)} 45 0)`)
+    const len = 40 + pl * 320
+    const wob = reduced ? 0 : Math.sin(t * 1.3) * 3
+    trail.setAttribute('d', `M92 1C${(92 + len * 0.35).toFixed(1)} ${(1 + wob).toFixed(1)} ${(92 + len * 0.7).toFixed(1)} ${(-wob).toFixed(1)} ${(92 + len).toFixed(1)} ${(2 + wob).toFixed(1)}`)
+    trail.style.opacity = 0.35
+    plane.style.opacity = pl > 0 && pl < 1 ? 1 : 0
+  }
+  let running = false
+  const loop = (now) => {
+    animate(now)
+    if (running) requestAnimationFrame(loop)
+  }
+  if (!reduced)
+    new IntersectionObserver(([e]) => {
+      const was = running
+      running = e.isIntersecting
+      if (running && !was) requestAnimationFrame(loop)
+    }).observe(stage)
+
   addEventListener('scroll', () => requestAnimationFrame(frame), { passive: true })
   addEventListener('resize', frame)
   frame()
