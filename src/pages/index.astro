@@ -1,0 +1,76 @@
+---
+import '../styles/global.css'
+const title = 'Jason Meng — Vancouver, BC'
+const description = 'Jason Meng — Founder of Nominal Labs. Building distribution for tokenized assets. Based in Vancouver, Canada.'
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content="Jason Meng" />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://jasonmeng.xyz" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:site" content="@menciusxbt" />
+    <meta name="theme-color" content="#5fb3e8" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;700;900&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <section class="hero" data-scene>
+      <div class="stage" data-stage></div>
+    </section>
+    <main class="list">
+      <div class="list-inner">
+        <section>
+          <h2>Work</h2>
+          <ul>
+            <li><a href="https://nominal-labs.com" target="_blank" rel="noopener noreferrer">Nominal Labs <span>Founder · 2025 – now ↗</span></a></li>
+            <li><a href="https://layerzero.network" target="_blank" rel="noopener noreferrer">LayerZero <span>Business Development · 2023 – 2024 ↗</span></a></li>
+            <li><a href="https://www.nansen.ai" target="_blank" rel="noopener noreferrer">Nansen <span>Growth · 2022 – 2023 ↗</span></a></li>
+            <li><a href="https://www.hootsuite.com" target="_blank" rel="noopener noreferrer">Hootsuite <span>Customer Success · 2021 – 2022 ↗</span></a></li>
+            <li><a href="https://www.microsoft.com" target="_blank" rel="noopener noreferrer">Microsoft <span>Sales · 2019 – 2021 ↗</span></a></li>
+          </ul>
+        </section>
+        <section>
+          <h2>Writing</h2>
+          <ul>
+            <li><a href="https://mirror.xyz/jasonmeng.eth/or7Ea0FRB6_6_cxoxzGYH2u64wNXB3LcJ1GNt3twaeo" target="_blank" rel="noopener noreferrer">The VC Vision of Web3 <span>Mirror ↗</span></a></li>
+            <li><a href="https://mirror.xyz/jasonmeng.eth/KwmYFTEX0t7ALsZK9ValAw90cZMVCP-Pj0VdpxNo2-Q" target="_blank" rel="noopener noreferrer">DeFi for Dummies <span>Mirror ↗</span></a></li>
+            <li><a href="https://mirror.xyz/jasonmeng.eth/gfG062ge2dRoCV2driTolx1vnMPrhDsWNali3ym2Dak" target="_blank" rel="noopener noreferrer">The Finance Red Pill <span>Mirror ↗</span></a></li>
+            <li><a href="https://mirror.xyz/jasonmeng.eth/fTjc0Bk-ZkIX-cDci2jA_HfQJ2GQUN2A71Uoq1UaQ5k" target="_blank" rel="noopener noreferrer">Metaverse 1 <span>Mirror ↗</span></a></li>
+            <li><a href="https://mirror.xyz/jasonmeng.eth/wIXT23tQghJPgNoSqpjB2j9yeeQJlODDzNcrooZV1bU" target="_blank" rel="noopener noreferrer">Web3 Info List <span>Mirror ↗</span></a></li>
+          </ul>
+        </section>
+        <p class="foot">jasonczmeng@gmail.com · <a href="https://x.com/menciusxbt" target="_blank" rel="noopener noreferrer">X</a> · <a href="https://www.linkedin.com/in/jasonczmeng/" target="_blank" rel="noopener noreferrer">LinkedIn</a></p>
+      </div>
+    </main>
+    <script>
+      import { initScene } from '../scripts/scene.js'
+      initScene(document.querySelector('[data-scene]'))
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  .hero .stage::after {
+    content: 'Scroll';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 24px;
+    text-align: center;
+    font-size: 12px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #fff;
+    opacity: 0.75;
+  }
+</style>
