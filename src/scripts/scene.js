@@ -7,13 +7,14 @@
 
 const W = 1600, H = 900
 
-// Keyframes for the time of day, sampled by scroll progress (0 → 1).
+// Keyframes for the time of day, sampled by scroll progress (0 → 1). The sun path stays above the
+// big right-hand peak and then sinks into the valley beside it, so it sets once and never re-emerges.
 // plane: [brightness, sepia] for the sunlit fuselage; trail: contrail colour and opacity.
 const KEYS = [
   { at: 0, skyTop: '#5fb3e8', skyBot: '#d5ecf5', far: '#9fc3d3', near: '#173a2e', sun: '#fffdf2', glow: '#ffffff', sunX: 1400, sunY: 130, sunR: 54, stars: 0, plane: [1, 0], trail: '#ffffff', trailA: 0.85 },
-  { at: 0.3, skyTop: '#8fc4e6', skyBot: '#fbe1a8', far: '#d7b08a', near: '#2e2a1f', sun: '#fff6d8', glow: '#ffe7a8', sunX: 1330, sunY: 215, sunR: 62, stars: 0, plane: [1, 0.25], trail: '#fff4dc', trailA: 0.85 },
-  { at: 0.6, skyTop: '#ffd796', skyBot: '#f9935b', far: '#f2794f', near: '#2b0d1e', sun: '#fff3cf', glow: '#ffd59a', sunX: 1010, sunY: 300, sunR: 72, stars: 0, plane: [0.92, 0.5], trail: '#ffd9c2', trailA: 0.8 },
-  { at: 1, skyTop: '#2e2f66', skyBot: '#f0958a', far: '#a8708f', near: '#140c26', sun: '#ffe0bd', glow: '#f0958a', sunX: 960, sunY: 420, sunR: 76, stars: 0.9, plane: [0.42, 0.2], trail: '#f6b8b2', trailA: 0.5 },
+  { at: 0.3, skyTop: '#8fc4e6', skyBot: '#fbe1a8', far: '#d7b08a', near: '#2e2a1f', sun: '#fff6d8', glow: '#ffe7a8', sunX: 1230, sunY: 150, sunR: 60, stars: 0, plane: [1, 0.25], trail: '#fff4dc', trailA: 0.85 },
+  { at: 0.6, skyTop: '#ffd796', skyBot: '#f9935b', far: '#f2794f', near: '#2b0d1e', sun: '#fff3cf', glow: '#ffd59a', sunX: 1040, sunY: 250, sunR: 70, stars: 0, plane: [0.92, 0.5], trail: '#ffd9c2', trailA: 0.8 },
+  { at: 1, skyTop: '#2e2f66', skyBot: '#f0958a', far: '#a8708f', near: '#140c26', sun: '#ffe0bd', glow: '#f0958a', sunX: 960, sunY: 400, sunR: 74, stars: 0.9, plane: [0.42, 0.2], trail: '#f6b8b2', trailA: 0.5 },
 ]
 const COLORS = ['far', 'near', 'sun', 'glow', 'trail']
 
