@@ -11,12 +11,13 @@ const W = 1600, H = 900
 // big right-hand peak and then sinks into the valley beside it, so it sets once and never re-emerges.
 // plane: [brightness, sepia] for the sunlit fuselage; trail: contrail colour and opacity.
 const KEYS = [
-  { at: 0, skyTop: '#5fb3e8', skyBot: '#d5ecf5', far: '#9fc3d3', near: '#173a2e', sun: '#fffdf2', glow: '#ffffff', sunX: 1400, sunY: 130, sunR: 54, stars: 0, plane: [1, 0], trail: '#ffffff', trailA: 0.85 },
-  { at: 0.3, skyTop: '#8fc4e6', skyBot: '#fbe1a8', far: '#d7b08a', near: '#2e2a1f', sun: '#fff6d8', glow: '#ffe7a8', sunX: 1230, sunY: 150, sunR: 60, stars: 0, plane: [1, 0.25], trail: '#fff4dc', trailA: 0.85 },
-  { at: 0.6, skyTop: '#ffd796', skyBot: '#f9935b', far: '#f2794f', near: '#2b0d1e', sun: '#fff3cf', glow: '#ffd59a', sunX: 1040, sunY: 250, sunR: 70, stars: 0, plane: [0.92, 0.5], trail: '#ffd9c2', trailA: 0.8 },
-  { at: 1, skyTop: '#2e2f66', skyBot: '#f0958a', far: '#a8708f', near: '#140c26', sun: '#ffe0bd', glow: '#f0958a', sunX: 960, sunY: 400, sunR: 74, stars: 0.9, plane: [0.42, 0.2], trail: '#f6b8b2', trailA: 0.5 },
+  { at: 0, skyTop: '#5fb3e8', skyBot: '#d5ecf5', far: '#9fc3d3', near: '#173a2e', sun: '#fffdf2', glow: '#ffffff', sunX: 1400, sunY: 130, stars: 0, plane: [1, 0], trail: '#ffffff', trailA: 0.85 },
+  { at: 0.3, skyTop: '#8fc4e6', skyBot: '#fbe1a8', far: '#d7b08a', near: '#2e2a1f', sun: '#fff6d8', glow: '#ffe7a8', sunX: 1230, sunY: 150, stars: 0, plane: [1, 0.25], trail: '#fff4dc', trailA: 0.85 },
+  { at: 0.6, skyTop: '#ffd796', skyBot: '#f9935b', far: '#f2794f', near: '#2b0d1e', sun: '#fff3cf', glow: '#ffd59a', sunX: 1040, sunY: 250, stars: 0, plane: [0.92, 0.5], trail: '#ffd9c2', trailA: 0.8 },
+  { at: 1, skyTop: '#2e2f66', skyBot: '#f0958a', far: '#a8708f', near: '#140c26', sun: '#ffe0bd', glow: '#f0958a', sunX: 960, sunY: 400, stars: 0.9, plane: [0.42, 0.2], trail: '#f6b8b2', trailA: 0.5 },
 ]
-const COLORS = ['far', 'near', 'sun', 'glow', 'trail']
+const COLORS = ['far', 'near']
+const SUN_R = 62 // scene units; constant so the disc is drawn once and only ever moved
 
 const rng = (seed) => () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
@@ -247,11 +248,14 @@ const LAMPS = [
   ['nav', 158, 31, '#3cff7a'], ['strobe', 155, 30, '#ffffff'], ['strobe', 6, 51, '#ffffff'],
   ['landing', 247, 74, '#fff6e0'],
 ]
-// Contrails from both engines: long soft wedges that grow from where the plane came in.
+// Contrails from both engines: fixed-length soft wedges that fade out behind the plane.
 const TRAILS = [[183, 72], [190, 91]]
 const TRAIL_LEN = 760 // scene units
 // Flight path in scene x; its height is set from the title in measure() so it always passes just below it.
+// The plane starts and ends off-frame and its contrails dissipate as it leaves, so it is never
+// hidden: it is drawn once at load and only ever moved.
 const PATH = { x0: -260, x1: 1880, climb: 44 }
+const REST_X = 700 // where the plane sits when motion is reduced
 const FIN_TOP = 67 // drawing units from the anchor up to the fin tip
 
 export function initScene(root) {
@@ -263,13 +267,13 @@ export function initScene(root) {
   let html = `<div class="layer" data-lag="1">
     ${KEYS.map((k, j) => `<div class="fill sky" data-key="${j}" style="background:linear-gradient(${k.skyTop} 45%, ${k.skyBot})"></div>`).join('')}
     <div class="fill art" data-stars style="background-image:${svgURL(stars)}"></div>
-    <div class="glow" data-glow>${KEYS.map((k, j) => `<div class="fill" data-key="${j}" data-cross style="background:radial-gradient(closest-side, ${k.glow}8c, ${k.glow}00)"></div>`).join('')}</div>
-    <div class="sun" data-sun></div>
+    <div class="glow" data-glow>${KEYS.map((k, j) => `<div class="fill" data-key="${j}" data-cross="0.55" style="background:radial-gradient(closest-side, ${k.glow}8c, ${k.glow}00)"></div>`).join('')}</div>
+    <div class="sun" data-sun>${KEYS.map((k, j) => `<div class="fill" data-key="${j}" style="background:${k.sun}"></div>`).join('')}</div>
   </div>`
   // In front of the far ridges and behind the title.
   const planeLayer = `<div class="layer" data-lag="0.75">
-    <div class="plane" data-plane>
-      ${TRAILS.map(() => '<div class="trail" data-trail></div>').join('')}
+    <div class="plane parked" data-plane>
+      ${TRAILS.map(() => `<div class="trail" data-trail>${KEYS.map((k, j) => `<div class="fill" data-key="${j}" data-cross="${k.trailA}" style="--c:${k.trail}${Math.round(k.trailA * 255).toString(16).padStart(2, '0')}"></div>`).join('')}</div>`).join('')}
       <div class="craft" data-craft>${PLANE_SVG}
         ${LAMPS.map(([kind, x, y, c]) => `<i class="lamp ${kind}" style="left:${((x / PW) * 100).toFixed(2)}%;top:${((y / PH) * 100).toFixed(2)}%;--c:${c}"></i>`).join('')}
       </div>
@@ -290,7 +294,12 @@ export function initScene(root) {
   stage.innerHTML = html
 
   const $ = (s) => [...stage.querySelectorAll(s)]
-  const keyed = $('[data-key]').map((el) => [el, Number(el.dataset.key), el.hasAttribute('data-cross')]), lights = $('[data-light]'), trails = $('[data-trail]'), lamps = $('.lamp')
+  // [element, keyframe index, peak alpha of the next copy if this copy is translucent]
+  const keyed = $('[data-key]').map((el) => {
+    const j = Number(el.dataset.key), next = el.parentElement.querySelector(`[data-key="${j + 1}"]`)
+    return [el, j, el.hasAttribute('data-cross') ? Number(next?.dataset.cross || 0) : null]
+  })
+  const lights = $('[data-light]'), trails = $('[data-trail]'), lamps = $('.lamp')
   const movers = $('[data-lag]'), lags = movers.map((m) => Number(m.dataset.lag))
   const [sun] = $('[data-sun]'), [glow] = $('[data-glow]'), [starsEl] = $('[data-stars]'), [shade] = $('[data-shade]')
   const [plane] = $('[data-plane]'), [craft] = $('[data-craft]'), planeArt = craft.querySelector('svg'), [subtitle] = $('.title > p')
@@ -314,6 +323,7 @@ export function initScene(root) {
     y1 = below + 14 + FIN_TOP * u; y0 = y1 + PATH.climb * k
     angle = (Math.atan2(y1 - y0, (PATH.x1 - PATH.x0) * k) * 180) / Math.PI
     glow.style.width = glow.style.height = `${440 * k}px`
+    sun.style.width = sun.style.height = `${2 * SUN_R * k}px`
     painted = -1
   }
 
@@ -321,17 +331,18 @@ export function initScene(root) {
   let p = target()
   // Colours, sun and lights; runs only when progress has moved.
   function paint() {
-    const [i, t] = segment(p), a = RGB[i], b = RGB[i + 1], A = KEYS[i], B = KEYS[i + 1]
+    const [i, t] = segment(p), A = KEYS[i], B = KEYS[i + 1]
     const n = (key) => lerp(A[key], B[key], t)
-    // Copy i is fully on and copy i + 1 fades in over it: an exact colour blend, done by the compositor.
-    // Translucent glows fade out as the next fades in, so they don't stack up brighter.
-    for (const [el, j, cross] of keyed) el.style.opacity = j === i ? (cross ? 1 - t : 1).toFixed(3) : j === i + 1 ? t.toFixed(3) : 0
+    // Copy i is fully on and copy i + 1 fades in over it: an exact blend, done by the compositor.
+    // Translucent copies (glow, contrails) scale the lower one by (1 - t) / (1 - t * alpha of the
+    // upper one), so the pair keeps the blended alpha instead of dimming midway through.
+    for (const [el, j, nextA] of keyed) {
+      const o = j === i ? (nextA === null ? 1 : (1 - t) / (1 - t * nextA)) : j === i + 1 ? t : 0
+      el.style.opacity = o.toFixed(3)
+    }
     const sx = ox + n('sunX') * k, sy = oy + n('sunY') * k
-    // The disc is resized rather than scaled, so it is always drawn crisp at its real size.
-    const sr = n('sunR') * k
-    sun.style.width = sun.style.height = `${(sr * 2).toFixed(1)}px`
-    sun.style.transform = `translate3d(${(sx - sr).toFixed(1)}px, ${(sy - sr).toFixed(1)}px, 0)`
-    sun.style.backgroundColor = rgb(a.sun, b.sun, t)
+    // Sun and glow are pre-drawn (one copy per keyframe colour, crossfaded above) and only moved.
+    sun.style.transform = `translate3d(${(sx - SUN_R * k).toFixed(1)}px, ${(sy - SUN_R * k).toFixed(1)}px, 0)`
     glow.style.transform = `translate3d(${(sx - 220 * k).toFixed(1)}px, ${(sy - 220 * k).toFixed(1)}px, 0)`
     starsEl.style.opacity = n('stars').toFixed(3)
     shade.style.opacity = (1 - p * 0.68).toFixed(3)
@@ -339,21 +350,22 @@ export function initScene(root) {
     planeArt.style.filter = `brightness(${lerp(A.plane[0], B.plane[0], t).toFixed(3)}) sepia(${lerp(A.plane[1], B.plane[1], t).toFixed(3)})`
     const glowing = (0.3 + span(p, 0.45, 0.9) * 0.7).toFixed(3)
     lamps.forEach((l) => (l.style.opacity = glowing))
-    for (const tr of trails) {
-      tr.style.setProperty('--c', rgb(a.trail, b.trail, t))
-      tr.style.opacity = n('trailA').toFixed(3)
-    }
   }
   // Scroll sets where the plane is along its climb; time adds a slight bob and pitch.
+  let inFlight = false, trailFade = -1
+  // Blinking lamps pause while the plane is parked off-frame or the scene is scrolled away.
+  const pauseLamps = () => plane.classList.toggle('parked', !(visible && inFlight))
   function fly(now) {
-    const q = reduced ? 0.45 : span(p, 0.03, 0.97)
+    const q = reduced ? (REST_X - PATH.x0) / (PATH.x1 - PATH.x0) : span(p, 0.03, 0.97)
     const x = lerp(PATH.x0, PATH.x1, q), t = now / 1000
     plane.style.transform = `translate3d(${(ox + x * k).toFixed(1)}px, ${lerp(y0, y1, q).toFixed(1)}px, 0) rotate(${angle.toFixed(2)}deg)`
-    plane.style.visibility = q > 0 && q < 1 ? 'visible' : 'hidden'
     if (!reduced) craft.style.transform = `translate3d(0, ${(Math.sin(t * 0.9) * 1.6 * k).toFixed(2)}px, 0) rotate(${(Math.sin(t * 0.6 + 1) * 0.5).toFixed(2)}deg)`
-    const grown = clamp(((x - PATH.x0) * 0.9) / TRAIL_LEN)
-    for (const tr of trails) tr.style.transform = `scaleX(${grown.toFixed(4)})`
-    return q > 0 && q < 1
+    // Contrails dissipate as the plane leaves, so nothing pops off at the end of the path.
+    const fade = 1 - span(q, 0.86, 1)
+    if (fade !== trailFade) { for (const tr of trails) tr.style.opacity = fade.toFixed(3); trailFade = fade }
+    const f = q > 0 && q < 1
+    if (f !== inFlight) { inFlight = f; pauseLamps() }
+    return f
   }
 
   let running = false, visible = true, last = 0, lastExit = -1
@@ -379,6 +391,30 @@ export function initScene(root) {
   new ResizeObserver(() => { measure(); wake() }).observe(root)
   addEventListener('resize', () => { measure(); wake() })
   addEventListener('scroll', wake, { passive: true })
-  new IntersectionObserver(([e]) => { visible = e.isIntersecting; wake() }).observe(stage)
+  new IntersectionObserver(([e]) => { visible = e.isIntersecting; pauseLamps(); wake() }).observe(stage)
   wake()
+
+  // After load, pre-raster everything that starts hidden (later colour copies, lights, stars and
+  // the parked plane), one group per idle period, so the first scroll never waits on drawing them.
+  // Rastered tiles stay resident, so every later fade or move is compositor-only.
+  const idle = window.requestIdleCallback || ((f) => setTimeout(f, 300))
+  const groups = [1, 2, 3].map((j) => keyed.filter(([, key]) => key === j).map(([el]) => el)).concat([[...lights, starsEl], [plane]])
+  function warm() {
+    const group = groups.shift()
+    if (!group) return
+    idle(() => {
+      if (running) { groups.unshift(group); return setTimeout(warm, 500) } // wait until scrolling stops
+      const hidden = group.filter((el) => el === plane || Number(el.style.opacity) === 0)
+      for (const el of hidden) el.style.opacity = 0.004
+      if (group[0] === plane) plane.style.transform = `translate3d(${stage.clientWidth / 2}px, ${y1}px, 0)`
+      setTimeout(() => {
+        for (const el of hidden) el.style.opacity = el === plane ? '' : 0
+        painted = -1
+        fly(performance.now())
+        wake()
+        warm()
+      }, 250)
+    }, { timeout: 3000 })
+  }
+  if (!reduced) warm()
 }
