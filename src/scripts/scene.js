@@ -1,261 +1,373 @@
-// North Shore parallax scene. Scrolling moves the sun from midday through sunset to dusk,
-// then the layers drift apart at different speeds as the scene leaves the screen.
+// North Shore parallax scene. Scrolling moves the sun from midday through sunset to dusk while an
+// airliner climbs across the sky, then the layers drift apart as the scene leaves the screen.
+//
+// Performance: every layer is pre-drawn once per keyframe colour and the copies are crossfaded,
+// so scrolling only changes transform and opacity. Nothing is re-rasterised per frame; the
+// compositor does the blending.
 
-const W = 1600, H = 900, BOTTOM = 4000
+const W = 1600, H = 900
 
 // Keyframes for the time of day, sampled by scroll progress (0 → 1).
+// plane: [brightness, sepia] for the sunlit fuselage; trail: contrail colour and opacity.
 const KEYS = [
-  { at: 0, skyTop: '#5fb3e8', skyBot: '#d5ecf5', far: '#9fc3d3', near: '#173a2e', sun: '#fffdf2', glow: '#ffffff', title: '#ffffff', sunX: 1400, sunY: 130, sunR: 54, stars: 0 },
-  { at: 0.3, skyTop: '#8fc4e6', skyBot: '#fbe1a8', far: '#d7b08a', near: '#2e2a1f', sun: '#fff6d8', glow: '#ffe7a8', title: '#fffaf0', sunX: 1330, sunY: 215, sunR: 62, stars: 0 },
-  { at: 0.6, skyTop: '#ffd796', skyBot: '#f9935b', far: '#f2794f', near: '#2b0d1e', sun: '#fff3cf', glow: '#ffd59a', title: '#fff4e6', sunX: 1010, sunY: 300, sunR: 72, stars: 0 },
-  { at: 1, skyTop: '#2e2f66', skyBot: '#f0958a', far: '#a8708f', near: '#140c26', sun: '#ffe0bd', glow: '#f0958a', title: '#fff1ec', sunX: 960, sunY: 420, sunR: 76, stars: 0.9 },
+  { at: 0, skyTop: '#5fb3e8', skyBot: '#d5ecf5', far: '#9fc3d3', near: '#173a2e', sun: '#fffdf2', glow: '#ffffff', sunX: 1400, sunY: 130, sunR: 54, stars: 0, plane: [1, 0], trail: '#ffffff', trailA: 0.85 },
+  { at: 0.3, skyTop: '#8fc4e6', skyBot: '#fbe1a8', far: '#d7b08a', near: '#2e2a1f', sun: '#fff6d8', glow: '#ffe7a8', sunX: 1330, sunY: 215, sunR: 62, stars: 0, plane: [1, 0.25], trail: '#fff4dc', trailA: 0.85 },
+  { at: 0.6, skyTop: '#ffd796', skyBot: '#f9935b', far: '#f2794f', near: '#2b0d1e', sun: '#fff3cf', glow: '#ffd59a', sunX: 1010, sunY: 300, sunR: 72, stars: 0, plane: [0.92, 0.5], trail: '#ffd9c2', trailA: 0.8 },
+  { at: 1, skyTop: '#2e2f66', skyBot: '#f0958a', far: '#a8708f', near: '#140c26', sun: '#ffe0bd', glow: '#f0958a', sunX: 960, sunY: 420, sunR: 76, stars: 0.9, plane: [0.42, 0.2], trail: '#f6b8b2', trailA: 0.5 },
 ]
-const COLOR_KEYS = ['skyTop', 'skyBot', 'far', 'near', 'sun', 'glow', 'title']
+const COLORS = ['far', 'near', 'sun', 'glow', 'trail']
 
 const rng = (seed) => () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
-const mix = (a, b, t) => '#' + hex(a).map((v, i) => Math.round(v + (hex(b)[i] - v) * t).toString(16).padStart(2, '0')).join('')
+const RGB = KEYS.map((k) => Object.fromEntries(COLORS.map((c) => [c, hex(k[c])])))
 const lerp = (a, b, t) => a + (b - a) * t
-const smooth = (t) => t * t * (3 - 2 * t)
+const clamp = (v) => Math.min(1, Math.max(0, v))
+const span = (p, a, b) => clamp((p - a) / (b - a))
+const mixA = (a, b, t) => a.map((v, i) => lerp(v, b[i], t))
+const rgb = (a, b, t) => `rgb(${mixA(a, b, t).map(Math.round).join(',')})`
 
-function sample(p) {
+// Which keyframe segment p falls in, and how far along it.
+function segment(p) {
   let i = 0
   while (i < KEYS.length - 2 && p > KEYS[i + 1].at) i++
-  const a = KEYS[i], b = KEYS[i + 1]
-  const t = smooth(Math.min(1, Math.max(0, (p - a.at) / (b.at - a.at))))
-  const out = {}
-  for (const k of COLOR_KEYS) out[k] = mix(a[k], b[k], t)
-  for (const k of ['sunX', 'sunY', 'sunR', 'stars']) out[k] = lerp(a[k], b[k], t)
-  return out
+  return [i, clamp((p - KEYS[i].at) / (KEYS[i + 1].at - KEYS[i].at))]
 }
 
-function ridge(seed, base, peaks, rough = 14, step = 8) {
+// --- Silhouettes -------------------------------------------------------------------------------
+
+function ridgeLine(seed, base, peaks, rough = 14, step = 8) {
   const r = rng(seed)
-  let n = 0, d = ''
+  const pts = []
+  let n = 0
   for (let x = -40; x <= W + 40; x += step) {
     n += (r() - 0.5) * rough * 0.6; n *= 0.9
     let y = base + n
     for (const p of peaks) y -= p.h * Math.exp(-((x - p.x) ** 2) / (2 * p.w ** 2))
-    d += (d ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1)
+    pts.push([x, y])
   }
-  return `<path d="${d} L${W + 40} ${BOTTOM} L-40 ${BOTTOM}Z"/>`
+  return pts
+}
+const ridgePath = (pts) => `<path d="M${pts.map(([x, y]) => x + ' ' + y.toFixed(1)).join('L')}L${W + 40} ${H + 40}L-40 ${H + 40}Z"/>`
+function ridgeAt(pts, x) {
+  const i = Math.min(pts.length - 2, Math.max(0, Math.floor((x - pts[0][0]) / (pts[1][0] - pts[0][0]))))
+  const [[x0, y0], [x1, y1]] = [pts[i], pts[i + 1]]
+  return lerp(y0, y1, (x - x0) / (x1 - x0))
 }
 function fir(x, y, h) {
   const w = h * 0.36, tiers = 4
-  let d = `M${x} ${y - h}`
+  const pt = (px, py) => `L${px.toFixed(1)} ${py.toFixed(1)}`
+  let d = `M${x.toFixed(1)} ${(y - h).toFixed(1)}`
   for (let i = 1; i <= tiers; i++) {
     const ty = y - h + (h * i) / tiers, tw = (w * i) / tiers
-    d += `L${x + tw} ${ty}L${x + tw * 0.45} ${ty}`
+    d += pt(x + tw, ty) + pt(x + tw * 0.45, ty)
   }
-  d += `L${x + w * 0.1} ${y}L${x - w * 0.1} ${y}`
+  d += pt(x + w * 0.1, y) + pt(x - w * 0.1, y)
   for (let i = tiers; i >= 1; i--) {
     const ty = y - h + (h * i) / tiers, tw = (w * i) / tiers
-    d += `L${x - tw * 0.45} ${ty}L${x - tw} ${ty}`
+    d += pt(x - tw * 0.45, ty) + pt(x - tw, ty)
   }
-  return `<path d="${d}Z"/>`
+  return d + 'Z'
 }
 function firs(seed, base, { from = -20, to = W + 20, hMin = 40, hMax = 90, gap = 18 } = {}) {
   const r = rng(seed)
-  let s = `<rect x="-40" y="${base}" width="${W + 80}" height="${BOTTOM}"/>`
-  for (let x = from; x < to; x += gap * (0.6 + r() * 0.8)) s += fir(x, base + 4, hMin + r() * (hMax - hMin))
-  return s
+  let d = ''
+  for (let x = from; x < to; x += gap * (0.6 + r() * 0.8)) d += fir(x, base + 4, hMin + r() * (hMax - hMin))
+  return `<rect x="-40" y="${base}" width="${W + 80}" height="${H}"/><path d="${d}"/>`
 }
+
+// Lights, collected while drawing; each switches on at its own point in dusk.
+const LIGHTS = { city: [], hills: [] }
+const WARM = ['#ffd27a', '#ffc867', '#ffe3a6', '#fff0cf', '#cfe0ff']
+
+// Towers return their outline plus `roof(x)`, the roof height at x, so windows stay inside.
 function tower(x, base, w, h, kind) {
   const t = base - h
   if (kind === 'harbour') {
     const cx = x + w / 2
-    return `<rect x="${x}" y="${t}" width="${w}" height="${h + 10}"/>
-      <path d="M${cx - w * 1.4} ${t - 4}Q${cx} ${t - 26} ${cx + w * 1.4} ${t - 4}L${cx + w * 1.1} ${t + 6}H${cx - w * 1.1}Z"/>
-      <rect x="${cx - 1.5}" y="${t - 62}" width="3" height="40"/>`
+    return {
+      svg: `<rect x="${x}" y="${t}" width="${w}" height="${h + 10}"/>
+        <path d="M${cx - w * 1.4} ${t - 4}Q${cx} ${t - 26} ${cx + w * 1.4} ${t - 4}L${cx + w * 1.1} ${t + 6}H${cx - w * 1.1}Z"/>
+        <rect x="${cx - 1.5}" y="${t - 62}" width="3" height="40"/>`,
+      roof: () => t + 8, beacon: [cx, t - 62],
+    }
   }
-  if (kind === 'shangri') return `<path d="M${x} ${base + 10}V${t + 30}L${x + w * 0.3} ${t + 18}V${t}H${x + w * 0.55}V${t + 12}L${x + w} ${t + 26}V${base + 10}Z"/>`
-  if (kind === 'slant') return `<path d="M${x} ${base + 10}V${t + 12}L${x + w} ${t}V${base + 10}Z"/>`
-  return `<rect x="${x}" y="${t}" width="${w}" height="${h + 10}"/>`
+  if (kind === 'shangri') return {
+    svg: `<path d="M${x} ${base + 10}V${t + 30}L${x + w * 0.3} ${t + 18}V${t}H${x + w * 0.55}V${t + 12}L${x + w} ${t + 26}V${base + 10}Z"/>`,
+    roof: (px) => { const u = (px - x) / w; return u < 0.3 ? t + 30 - 40 * u : u < 0.55 ? t : t + 12 + (14 * (u - 0.55)) / 0.45 },
+    beacon: [x + w * 0.42, t],
+  }
+  if (kind === 'slant') return { svg: `<path d="M${x} ${base + 10}V${t + 12}L${x + w} ${t}V${base + 10}Z"/>`, roof: (px) => t + 12 - (12 * (px - x)) / w }
+  return { svg: `<rect x="${x}" y="${t}" width="${w}" height="${h + 10}"/>`, roof: () => t }
 }
-// Lit windows, collected while drawing the towers; each switches on at its own point in dusk.
-const LIGHTS = []
-function windows(seed, x, base, w, h) {
+// A window is lit only if its whole rectangle sits under the roof line, clear of the walls.
+function windows(seed, x, base, w, tw) {
   const r = rng(seed)
-  for (let wy = base - h + 8; wy < base - 4; wy += 7)
-    for (let wx = x + 3; wx < x + w - 3; wx += 5)
-      if (r() < 0.38) LIGHTS.push({ x: wx, y: wy, w: 2, h: 3, at: 0.72 + r() * 0.24 })
+  for (let wx = x + 3; wx + 2 <= x + w - 3; wx += 5)
+    for (let wy = base - 9; wy > base - 400; wy -= 7) {
+      if (wy < Math.max(tw.roof(wx), tw.roof(wx + 2)) + 5) break
+      if (r() < 0.4) LIGHTS.city.push({ x: wx, y: wy, w: 2, h: 3, c: WARM[Math.floor(r() * WARM.length)], at: 0.7 + r() * 0.26 })
+    }
 }
 function skyline(seed, base) {
   const r = rng(seed)
-  let s = ''
+  const towers = []
   for (let x = 640; x < 900; ) {
     const w = 18 + r() * 24, h = 30 + r() * 70
-    s += tower(x, base, w, h, r() < 0.3 ? 'slant' : 'box')
-    windows(Math.round(x * 13), x, base, w, h)
+    towers.push([x, w, tower(x, base, w, h, r() < 0.3 ? 'slant' : 'box')])
     x += w + r() * 4
   }
-  windows(701, 700, base, 22, 120)
-  windows(791, 790, base, 26, 150)
-  return s + tower(700, base, 22, 120, 'harbour') + tower(790, base, 26, 160, 'shangri')
+  towers.push([700, 22, tower(700, base, 22, 120, 'harbour')], [790, 26, tower(790, base, 26, 160, 'shangri')])
+  for (const [x, w, tw] of towers) {
+    windows(Math.round(x * 13), x, base, w, tw)
+    if (tw.beacon) LIGHTS.city.push({ x: tw.beacon[0] - 1.5, y: tw.beacon[1] - 2, w: 3, h: 3, c: '#ff4a3d', at: 0.66 })
+  }
+  return towers.map(([, , tw]) => tw.svg).join('')
 }
-// Lions Gate Bridge necklace lights and scattered North Shore homes.
-function bridgeLights(x1, x2, deck) {
-  for (let x = x1; x <= x2; x += 14) LIGHTS.push({ x, y: deck - 3, w: 2, h: 2, at: 0.7 + ((x - x1) / (x2 - x1)) * 0.12 })
-}
-function hillLights(seed, n, x1, x2, y1, y2) {
-  const r = rng(seed)
-  for (let i = 0; i < n; i++) LIGHTS.push({ x: x1 + r() * (x2 - x1), y: y1 + r() * (y2 - y1), w: 2, h: 2, at: 0.75 + r() * 0.22 })
-}
-bridgeLights(960, 1340, 690)
-hillLights(77, 40, 120, 1500, 600, 660)
 function bridge(x1, x2, deck, towerH) {
   const t1 = x1 + (x2 - x1) * 0.22, t2 = x1 + (x2 - x1) * 0.78, top = deck - towerH
+  for (let x = x1; x <= x2; x += 14) LIGHTS.city.push({ x, y: deck + 1, w: 2, h: 2, c: '#fff0c2', at: 0.7 + ((x - x1) / (x2 - x1)) * 0.12 })
+  for (const tx of [t1, t2]) LIGHTS.city.push({ x: tx - 1.5, y: top + 1, w: 3, h: 3, c: '#ff4a3d', at: 0.66 })
   return `<path fill="none" stroke="currentColor" stroke-width="3" d="M${x1} ${deck - 30}Q${(x1 + t1) / 2} ${deck - 20} ${t1} ${top}Q${(t1 + t2) / 2} ${deck - towerH * 0.25 + 30} ${t2} ${top}Q${(t2 + x2) / 2} ${deck - 20} ${x2} ${deck - 30}"/>
     <rect x="${x1 - 10}" y="${deck}" width="${x2 - x1 + 20}" height="8"/>
     <rect x="${t1 - 6}" y="${top}" width="12" height="${towerH + 40}"/><rect x="${t2 - 6}" y="${top}" width="12" height="${towerH + 40}"/>`
 }
+// North Shore homes: scattered on the lower slopes of the nearest ridge, below its skyline.
+function hillLights(seed, n, pts, x1, x2) {
+  const r = rng(seed)
+  for (let i = 0; i < n; i++) {
+    const x = x1 + r() * (x2 - x1)
+    LIGHTS.hills.push({ x, y: ridgeAt(pts, x) + 14 + r() * 50, w: 2, h: 2, c: WARM[Math.floor(r() * 4)], at: 0.74 + r() * 0.22 })
+  }
+}
 // The Lions: twin rounded granite peaks on a shared shoulder.
 const lions = (x, s = 1) => [{ x: x + 45 * s, h: 70 * s, w: 70 * s }, { x, h: 120 * s, w: 18 * s }, { x: x + 95 * s, h: 108 * s, w: 16 * s }]
 
+const shore = ridgeLine(13, 620, [{ x: 400, h: 120, w: 240 }, { x: 1100, h: 100, w: 260 }], 18)
+hillLights(77, 60, shore, 60, 1540)
+
 // Far → near. `lag` is how much a layer trails the page as the scene scrolls away (1 = stays put).
 const LAYERS = [
-  { lag: 0.95, svg: ridge(5, 430, [{ x: 200, h: 140, w: 140 }, { x: 1200, h: 200, w: 180 }, { x: 1500, h: 120, w: 100 }], 10) },
-  { lag: 0.8, svg: ridge(9, 520, [...lions(620, 1.25), { x: 250, h: 120, w: 140 }, { x: 1250, h: 140, w: 180 }], 14) },
-  { lag: 0.62, svg: ridge(13, 620, [{ x: 400, h: 120, w: 240 }, { x: 1100, h: 100, w: 260 }], 18) },
-  { lag: 0.45, svg: firs(17, 720, { hMin: 30, hMax: 60, gap: 14 }) + skyline(21, 720) + bridge(960, 1340, 690, 90) },
+  { lag: 0.95, svg: ridgePath(ridgeLine(5, 430, [{ x: 200, h: 140, w: 140 }, { x: 1200, h: 200, w: 180 }, { x: 1500, h: 120, w: 100 }], 10)) },
+  { lag: 0.8, svg: ridgePath(ridgeLine(9, 520, [...lions(620, 1.25), { x: 250, h: 120, w: 140 }, { x: 1250, h: 140, w: 180 }], 14)) },
+  { lag: 0.62, svg: ridgePath(shore), lights: LIGHTS.hills, waves: 3 },
+  { lag: 0.45, svg: firs(17, 720, { hMin: 30, hMax: 60, gap: 14 }) + skyline(21, 720) + bridge(960, 1340, 690, 90), lights: LIGHTS.city, waves: 4 },
   { lag: 0.22, svg: firs(31, 820, { hMin: 70, hMax: 130, gap: 22 }) },
-  { lag: 0, svg: firs(37, 900, { from: -30, to: 260, hMin: 260, hMax: 420, gap: 50 }) + firs(41, 900, { from: 1320, to: 1650, hMin: 260, hMax: 430, gap: 52 }) + `<rect x="-40" y="880" width="${W + 80}" height="${BOTTOM}"/>` },
+  { lag: 0, svg: firs(37, 900, { from: -30, to: 260, hMin: 260, hMax: 430, gap: 50 }) + firs(41, 900, { from: 1320, to: 1650, hMin: 260, hMax: 430, gap: 52 }) + `<rect x="-40" y="880" width="${W + 80}" height="40"/>` },
 ]
 const TITLE_AFTER = 1
+const LIGHTS_FROM = 0.66, LIGHTS_TO = 0.96
 
-// A small flock crossing during midday → golden hour, and a plane crossing during sunset → dusk.
-// Formation offsets; each bird also gets its own size, flap speed and drift phase.
-const BIRDS = [[0, 0], [-34, 14], [-30, -16], [-66, 26], [-60, -30], [-98, 6], [-120, -18]].map(([x, y], i) => ({
-  x: x * 1.8, y: y * 1.8, s: 1.9 + ((i * 7) % 5) * 0.12, flap: (0.42 + ((i * 3) % 5) * 0.07).toFixed(2), phase: i * 1.37,
-}))
-const bird = (b, i) =>
-  `<g data-bird="${i}"><path class="bird" style="animation-duration:${b.flap}s;animation-delay:-${(b.phase % 1).toFixed(2)}s" d="M-9 0Q-4 -6 0 0Q4 -6 9 0Q4 -3 0 2Q-4 -3 -9 0Z"/></g>`
-// Airliner facing left (nose at x 0, tail fin at the right). The trail streams out behind the tail.
-const PLANE = `<g data-plane>
-  <path data-trail d="M92 1H92" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-  <g data-body><path d="M0 0q2-4 10-4h60l12-9h7l-6 11v4h-80q-3 0-3-2z"/><path d="M26 -1h18l-12-16h-6z"/><path d="M30 3h16l-10 11h-6z"/>
-  <circle class="beacon" cx="86" cy="-10" r="2.4" fill="#ff5a4e"/><circle class="strobe" cx="36" cy="13" r="1.8" fill="#ffffff"/></g></g>`
-const span = (p, a, b) => Math.min(1, Math.max(0, (p - a) / (b - a)))
+const svgURL = (body, fill = '#000') => `url('data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMax slice" fill="${fill}" color="${fill}">${body}</svg>`)}')`
+
+// Lights grouped into a few waves, each its own image, so switching them on is just opacity.
+function lightWaves(list, n) {
+  const groups = Array.from({ length: n }, () => [])
+  for (const l of list) groups[Math.min(n - 1, Math.floor(span(l.at, LIGHTS_FROM, LIGHTS_TO) * n))].push(l)
+  return groups.map((g, i) => ({
+    at: LIGHTS_FROM + ((LIGHTS_TO - LIGHTS_FROM) * i) / n,
+    url: svgURL(g.map((l) => `<rect x="${l.x.toFixed(1)}" y="${l.y.toFixed(1)}" width="${l.w}" height="${l.h}" fill="${l.c}"/>`).join('')),
+  }))
+}
+
+// --- Airliner ----------------------------------------------------------------------------------
+// Seen from the ground, nose to the right: the near wing and stabiliser rise across the
+// fuselage, the far ones drop below the belly. Drawn in a 400 × 140 box.
+
+const PLANE_LEN = 210 // scene units
+const PW = 400, PH = 140, ANCHOR = [200, 70]
+const FUSE = 'M8 49C30 47 60 46.5 90 46.5L330 46.5C360 46.5 378 50 388 58C393 62 394 67 390 71C384 76 368 77.5 345 77.5L120 77.5C90 77.5 50 66 12 55C8 54 6 51 8 49Z'
+const FIN = 'M84 47.5C72 40 52 18 38 4L20 3.5Q16 3.5 15.5 6.5L8 48.5Z'
+function cabinWindows() {
+  let s = ''
+  for (let x = 110; x < 326; x += 7.2) if (x < 196 || x > 222) s += `<rect x="${x.toFixed(1)}" y="55.5" width="3.4" height="4.8" rx="1.6"/>`
+  return s
+}
+const PLANE_SVG = `<svg viewBox="0 0 ${PW} ${PH}" aria-hidden="true">
+  <defs>
+    <linearGradient id="pl-fuse" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f6f9"/><stop offset=".22" stop-color="#fff"/><stop offset=".55" stop-color="#e3e8ee"/><stop offset=".8" stop-color="#b3bcc7"/><stop offset="1" stop-color="#7f8a97"/>
+    </linearGradient>
+    <linearGradient id="pl-belly" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a3f6e"/><stop offset="1" stop-color="#121d38"/></linearGradient>
+    <linearGradient id="pl-fin" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1c2f5c"/><stop offset=".6" stop-color="#2c4580"/><stop offset="1" stop-color="#16244a"/></linearGradient>
+    <linearGradient id="pl-wing" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#cfd6de"/><stop offset=".5" stop-color="#aab3bf"/><stop offset="1" stop-color="#8b95a3"/></linearGradient>
+    <linearGradient id="pl-far" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7c8795"/><stop offset="1" stop-color="#5d6775"/></linearGradient>
+    <linearGradient id="pl-nacelle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eef1f5"/><stop offset=".35" stop-color="#fff"/><stop offset=".7" stop-color="#c3cad3"/><stop offset="1" stop-color="#6c7784"/>
+    </linearGradient>
+    <linearGradient id="pl-glass" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5a7a9e"/><stop offset=".5" stop-color="#1a2532"/><stop offset="1" stop-color="#0d141c"/></linearGradient>
+    <clipPath id="pl-fuse-clip"><path d="${FUSE}"/></clipPath>
+    <clipPath id="pl-fin-clip"><path d="${FIN}"/></clipPath>
+  </defs>
+  <path d="M76 58L46 72H33L44 58Z" fill="url(#pl-far)"/>
+  <path d="M238 70L168 101L148 101L172 70Z" fill="url(#pl-far)"/>
+  <path d="M168 101L162 110H156L148 101Z" fill="#56606d"/>
+  <path d="M214 84L200 82L206 89Z" fill="#6c7683"/>
+  <path d="M203 85L234 84Q242 84 242 91Q242 98 234 98L205 97Q199 95 199 91Q199 87 203 85Z" fill="url(#pl-far)"/>
+  <path d="M199 87.5L191 89.5V92.5L199 94.5Z" fill="#3c444f"/>
+  <path d="${FIN}" fill="url(#pl-fin)"/>
+  <g clip-path="url(#pl-fin-clip)" fill="none" stroke-linecap="round">
+    <path d="M2 44C30 36 52 22 64 -2" stroke="#f9935b" stroke-width="7"/>
+    <path d="M-6 40C24 30 44 16 54 -4" stroke="#ffd796" stroke-width="3"/>
+    <path d="M38 4L84 47.5" stroke="#fff" stroke-opacity=".25" stroke-width="1.5"/>
+  </g>
+  <path d="${FUSE}" fill="url(#pl-fuse)"/>
+  <g clip-path="url(#pl-fuse-clip)">
+    <path d="M0 69.5H400V90H0Z" fill="url(#pl-belly)"/>
+    <path d="M0 67.4H400V69.2H0Z" fill="#f9935b"/>
+    <path d="M60 49.5H340" stroke="#fff" stroke-width="1.6" stroke-opacity=".9"/>
+    <path d="M100 46V78M128 46V78M150 46V78M256 46V78M300 46V78" stroke="#1b2633" stroke-opacity=".14" stroke-width=".5"/>
+    <path d="M150 77.5Q200 84 258 77.5Z" fill="#0f1830"/>
+  </g>
+  <g fill="#1f2a37">${cabinWindows()}</g>
+  <g fill="none" stroke="#8d97a3" stroke-width=".6">
+    <rect x="336" y="51.5" width="8.5" height="16" rx="2"/><rect x="200" y="54" width="6" height="10" rx="1.5"/><rect x="211" y="54" width="6" height="10" rx="1.5"/><rect x="96" y="52" width="8" height="15" rx="2"/>
+  </g>
+  <path d="M352 53L362.5 52.6L362.5 57.8L349.5 58.2Z" fill="url(#pl-glass)"/>
+  <path d="M364.5 52.6L372.5 53.5L379 58L364.5 57.8Z" fill="url(#pl-glass)"/>
+  <path d="M8 49C7 51 7.5 53 9.5 54.5L4 52.5Z" fill="#59636f"/>
+  <path d="M76 58L46 44H34L44 58.5Z" fill="url(#pl-wing)"/>
+  <path d="M240 74L168 42L148 42L172 75Z" fill="url(#pl-wing)"/>
+  <path d="M240 74L168 42L170 41L242 72.5Z" fill="#e9edf2"/>
+  <path d="M168 42L160 30H154L148 42Z" fill="url(#pl-fin)"/>
+  <g fill="#7d8794">
+    <path d="M186 64Q176 63.5 168 65.5Q176 67 186 66Z"/><path d="M172 53Q162 52.5 155 54.5Q162 56 172 55Z"/><path d="M159 46.5Q151 46 146 47.5Q151 49 159 48.5Z"/>
+  </g>
+  <path d="M228 66L214 60L202 61L207 67Z" fill="#b9c1cb"/>
+  <path d="M201 64.5L238 63.5Q248 63.5 248 72Q248 80.5 238 80.5L203 79.5Q196 76.5 196 72Q196 67.5 201 64.5Z" fill="url(#pl-nacelle)"/>
+  <path d="M232 63.8Q235 72 232 80.2" stroke="#f9935b" stroke-width="1.2" fill="none"/>
+  <ellipse cx="246.5" cy="72" rx="2.4" ry="8" fill="#dfe4ea" stroke="#9aa3ae" stroke-width=".6"/>
+  <path d="M197 67.5L187 70.2V73.8L197 76.5Z" fill="#4d5560"/>
+  <path d="M187 70.2L182 71.6V72.4L187 73.8Z" fill="#2f363f"/>
+</svg>`
+// Lamps sit outside the drawing's filter so they stay bright at dusk. Positions in drawing units.
+const LAMPS = [
+  ['beacon', 232, 46, '#ff3b30'], ['beacon', 214, 80.5, '#ff3b30'],
+  ['nav', 158, 31, '#3cff7a'], ['strobe', 155, 30, '#ffffff'], ['strobe', 6, 51, '#ffffff'],
+  ['landing', 247, 74, '#fff6e0'],
+]
+// Contrails from both engines: long soft wedges that grow from where the plane came in.
+const TRAILS = [[183, 72], [190, 91]]
+const TRAIL_LEN = 760 // scene units
+const PATH = { x0: -260, x1: 1880, y0: 118, y1: 52 }
+const ANGLE = (Math.atan2(PATH.y1 - PATH.y0, PATH.x1 - PATH.x0) * 180) / Math.PI
 
 export function initScene(root) {
   const stage = root.querySelector('[data-stage]')
-  const svgOpen = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMax slice" aria-hidden="true">`
-  const stars = (() => {
-    const r = rng(99)
-    return Array.from({ length: 140 }, () => `<circle cx="${(r() * W).toFixed(0)}" cy="${(r() * 520).toFixed(0)}" r="${(r() * 1.4 + 0.3).toFixed(2)}" opacity="${(r() * 0.8 + 0.2).toFixed(2)}"/>`).join('')
-  })()
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+  const r = rng(99)
+  const stars = Array.from({ length: 140 }, () => `<circle cx="${(r() * W).toFixed(0)}" cy="${(r() * 520).toFixed(0)}" r="${(r() * 1.4 + 0.3).toFixed(2)}" fill="#fff" opacity="${(r() * 0.8 + 0.2).toFixed(2)}"/>`).join('')
 
-  let html = `<div class="layer" data-lag="1">${svgOpen}
-    <defs>
-      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" data-c="skyTop"/><stop offset="1" data-c="skyBot"/></linearGradient>
-      <radialGradient id="glow"><stop offset="0" data-c="glow" stop-opacity=".55"/><stop offset="1" data-c="glow" stop-opacity="0"/></radialGradient>
-    </defs>
-    <rect x="-40" y="-400" width="${W + 80}" height="${H + 800}" fill="url(#sky)"/>
-    <g data-stars fill="#fff">${stars}</g>
-    <circle data-glow r="220" fill="url(#glow)"/>
-    <circle data-sun/>
-  </svg></div>`
-  html += `<div class="layer" data-lag="0.9">${svgOpen}
-    <g data-birds>${BIRDS.map(bird).join('')}</g>
-    ${PLANE}
-  </svg></div>`
+  let html = `<div class="layer" data-lag="1">
+    ${KEYS.map((k, j) => `<div class="fill sky" data-key="${j}" style="background:linear-gradient(${k.skyTop} 45%, ${k.skyBot})"></div>`).join('')}
+    <div class="fill art" data-stars style="background-image:${svgURL(stars)}"></div>
+    <div class="glow" data-glow></div><div class="sun" data-sun></div>
+  </div>
+  <div class="layer" data-lag="0.9">
+    <div class="plane" data-plane>
+      ${TRAILS.map(() => '<div class="trail" data-trail></div>').join('')}
+      <div class="craft" data-craft>${PLANE_SVG}
+        ${LAMPS.map(([kind, x, y, c]) => `<i class="lamp ${kind}" style="left:${((x / PW) * 100).toFixed(2)}%;top:${((y / PH) * 100).toFixed(2)}%;--c:${c}"></i>`).join('')}
+      </div>
+    </div>
+  </div>`
+  const waves = []
   LAYERS.forEach((l, i) => {
-    if (i === 3) {
-      l.svg += `<g data-lights fill="#ffd27a">${LIGHTS.map((w) => `<rect x="${w.x.toFixed(1)}" y="${w.y.toFixed(1)}" width="${w.w}" height="${w.h}" opacity="0" data-at="${w.at.toFixed(3)}"/>`).join('')}</g>`
-    }
-    html += `<div class="layer" data-lag="${l.lag}">${svgOpen}<g data-layer="${i}">${l.svg}</g></svg></div>`
-    if (i === TITLE_AFTER) html += `<div class="title" data-lag="${(l.lag + LAYERS[i + 1].lag) / 2}"><h1>Jason Meng</h1><p>Vancouver, BC</p></div>`
+    const lw = l.lights ? lightWaves(l.lights, l.waves) : []
+    waves.push(...lw)
+    const m = Math.pow(i / (LAYERS.length - 1), 1.15)
+    const tones = RGB.map((c) => svgURL(l.svg, rgb(c.far, c.near, m)))
+    html += `<div class="layer" data-lag="${l.lag}">${tones.map((url, j) => `<div class="fill art" data-key="${j}" style="background-image:${url}"></div>`).join('')}
+      ${lw.map((g) => `<div class="fill art" data-light style="background-image:${g.url}"></div>`).join('')}</div>`
+    if (i === TITLE_AFTER) html += `<div class="title" data-lag="${(l.lag + LAYERS[i + 1].lag) / 2}">
+      <div class="title-shade" data-shade aria-hidden="true"><b>Jason Meng</b><p>Vancouver, BC</p></div>
+      <h1>Jason Meng</h1><p>Vancouver, BC</p></div>`
   })
   stage.innerHTML = html
 
-  const stops = [...stage.querySelectorAll('[data-c]')]
-  const groups = [...stage.querySelectorAll('[data-layer]')]
-  const sun = stage.querySelector('[data-sun]')
-  const glow = stage.querySelector('[data-glow]')
-  const starG = stage.querySelector('[data-stars]')
-  const movers = [...stage.querySelectorAll('[data-lag]')]
-  const birds = stage.querySelector('[data-birds]')
-  const birdEls = [...stage.querySelectorAll('[data-bird]')]
-  const plane = stage.querySelector('[data-plane]')
-  const planeBody = stage.querySelector('[data-body]')
-  const trail = stage.querySelector('[data-trail]')
-  let progress = 0
-  const lights = [...stage.querySelectorAll('[data-at]')].map((el) => [el, Number(el.dataset.at)])
-  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+  const $ = (s) => [...stage.querySelectorAll(s)]
+  const keyed = $('[data-key]').map((el) => [el, Number(el.dataset.key)]), lights = $('[data-light]'), trails = $('[data-trail]'), lamps = $('.lamp')
+  const movers = $('[data-lag]'), lags = movers.map((m) => Number(m.dataset.lag))
+  const [sun] = $('[data-sun]'), [glow] = $('[data-glow]'), [starsEl] = $('[data-stars]'), [shade] = $('[data-shade]')
+  const [plane] = $('[data-plane]'), [craft] = $('[data-craft]'), planeArt = craft.querySelector('svg')
 
-  let last = -1
-  function frame() {
-    const travel = root.offsetHeight - innerHeight // scroll distance while the stage is pinned
-    const y = scrollY - root.offsetTop
-    const p = reduced ? 0.6 : Math.min(1, Math.max(0, y / travel))
-    const exit = Math.max(0, y - travel)
-    if (p === last && exit > innerHeight * 1.2) return
-    last = p
-    const s = sample(p)
-    for (const st of stops) st.setAttribute('stop-color', s[st.dataset.c])
-    groups.forEach((g, i) => {
-      const c = mix(s.far, s.near, Math.pow(i / (groups.length - 1), 1.15))
-      g.setAttribute('fill', c)
-      g.style.color = c
+  // Layout is read only here (on resize), never inside the frame loop.
+  let top = 0, travel = 1, k = 1, ox = 0, oy = 0, painted = -1
+  function measure() {
+    top = root.getBoundingClientRect().top + scrollY
+    travel = Math.max(1, root.offsetHeight - innerHeight)
+    const w = stage.clientWidth, h = stage.clientHeight
+    k = Math.max(w / W, h / H)
+    ox = (w - W * k) / 2; oy = h - H * k
+    const u = (PLANE_LEN / PW) * Math.min(k, w / 640) // smaller on phones, where the scene is cropped
+    Object.assign(craft.style, { width: `${PW * u}px`, height: `${PH * u}px`, left: `${-ANCHOR[0] * u}px`, top: `${-ANCHOR[1] * u}px` })
+    trails.forEach((tr, i) => {
+      const [tx, ty] = TRAILS[i], th = (8 + i * 4) * k
+      Object.assign(tr.style, { width: `${TRAIL_LEN * k}px`, height: `${th}px`, left: `${(tx - ANCHOR[0]) * u - TRAIL_LEN * k}px`, top: `${(ty - ANCHOR[1]) * u - th / 2}px` })
     })
-    sun.setAttribute('cy', s.sunY); sun.setAttribute('r', s.sunR); sun.setAttribute('fill', s.sun)
-    glow.setAttribute('cy', s.sunY); glow.setAttribute('cx', s.sunX); sun.setAttribute('cx', s.sunX)
-    starG.setAttribute('opacity', s.stars)
-    // Birds: left → right with a gentle rise, p 0.05–0.5
-    progress = p
-    birds.setAttribute('fill', mix(s.near, s.far, 0.25))
-    plane.setAttribute('fill', mix(s.near, s.far, 0.35))
-    plane.style.color = s.skyBot
-    if (reduced) animate(0)
-    // Lights switch on one by one through dusk
-    for (const [el, at] of lights) el.setAttribute('opacity', Math.min(1, Math.max(0, (p - at) / 0.03)).toFixed(2))
-    root.style.setProperty('--title', s.title)
-    root.style.setProperty('--shade', (0.38 - p * 0.26).toFixed(3))
-    root.style.setProperty('--near', s.near)
-    if (!reduced) for (const m of movers) m.style.transform = `translate3d(0, ${(exit * Number(m.dataset.lag)).toFixed(1)}px, 0)`
+    sun.style.width = sun.style.height = `${100 * k}px`
+    glow.style.width = glow.style.height = `${440 * k}px`
+    painted = -1
   }
-  // Birds and plane: scroll sets where they are along their path; time keeps them moving in place.
-  function animate(now) {
-    const t = now / 1000
-    const p = progress
-    // Flock crosses left → right during midday → golden hour, and creeps forward on its own
-    const b = span(p, 0.05, 0.5)
-    const fx = -150 + b * 1900 + (reduced ? 0 : Math.sin(t * 0.25) * 30)
-    const fy = 400 - b * 90 + Math.sin(b * 9) * 14
-    const spread = 1 + Math.sin(t * 0.6) * 0.12
-    birds.style.opacity = b > 0 && b < 1 ? 1 : 0
-    BIRDS.forEach((bd, i) => {
-      const bob = reduced ? 0 : Math.sin(t * 1.6 + bd.phase) * 6
-      const sway = reduced ? 0 : Math.sin(t * 0.9 + bd.phase * 0.7) * 8
-      const tilt = reduced ? 0 : Math.cos(t * 1.6 + bd.phase) * 9
-      birdEls[i].setAttribute('transform', `translate(${(fx + bd.x * spread + sway).toFixed(1)} ${(fy + bd.y * spread + bob).toFixed(1)}) rotate(${tilt.toFixed(1)}) scale(${bd.s})`)
-    })
-    // Plane crosses right → left, nose first, during sunset → dusk; gentle bob and bank, growing trail
-    const pl = span(p, 0.45, 0.98)
-    const px = 1750 - pl * 2100
-    const py = 70 - pl * 30 + (reduced ? 0 : Math.sin(t * 0.8) * 4)
-    const bank = reduced ? 0 : Math.sin(t * 0.5) * 2.5
-    plane.setAttribute('transform', `translate(${px.toFixed(1)} ${py.toFixed(1)}) scale(1.4)`)
-    planeBody.setAttribute('transform', `rotate(${bank.toFixed(2)} 45 0)`)
-    const len = 40 + pl * 320
-    const wob = reduced ? 0 : Math.sin(t * 1.3) * 3
-    trail.setAttribute('d', `M92 1C${(92 + len * 0.35).toFixed(1)} ${(1 + wob).toFixed(1)} ${(92 + len * 0.7).toFixed(1)} ${(-wob).toFixed(1)} ${(92 + len).toFixed(1)} ${(2 + wob).toFixed(1)}`)
-    trail.style.opacity = 0.35
-    plane.style.opacity = pl > 0 && pl < 1 ? 1 : 0
-  }
-  let running = false
-  const loop = (now) => {
-    animate(now)
-    if (running) requestAnimationFrame(loop)
-  }
-  if (!reduced)
-    new IntersectionObserver(([e]) => {
-      const was = running
-      running = e.isIntersecting
-      if (running && !was) requestAnimationFrame(loop)
-    }).observe(stage)
 
-  addEventListener('scroll', () => requestAnimationFrame(frame), { passive: true })
-  addEventListener('resize', frame)
-  frame()
+  const target = () => (reduced ? 0.6 : clamp((scrollY - top) / travel))
+  let p = target()
+  // Colours, sun and lights; runs only when progress has moved.
+  function paint() {
+    const [i, t] = segment(p), a = RGB[i], b = RGB[i + 1], A = KEYS[i], B = KEYS[i + 1]
+    const n = (key) => lerp(A[key], B[key], t)
+    // Copy i is fully on and copy i + 1 fades in over it: an exact colour blend, done by the compositor.
+    for (const [el, j] of keyed) el.style.opacity = j === i ? 1 : j === i + 1 ? t.toFixed(3) : 0
+    const sx = ox + n('sunX') * k, sy = oy + n('sunY') * k
+    sun.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -50%) scale(${(n('sunR') / 50).toFixed(3)})`
+    sun.style.backgroundColor = rgb(a.sun, b.sun, t)
+    glow.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -50%)`
+    glow.style.setProperty('--c', rgb(a.glow, b.glow, t))
+    starsEl.style.opacity = n('stars').toFixed(3)
+    shade.style.opacity = (1 - p * 0.68).toFixed(3)
+    lights.forEach((el, j) => (el.style.opacity = span(p, waves[j].at, waves[j].at + 0.035).toFixed(3)))
+    planeArt.style.filter = `brightness(${lerp(A.plane[0], B.plane[0], t).toFixed(3)}) sepia(${lerp(A.plane[1], B.plane[1], t).toFixed(3)})`
+    const glowing = (0.3 + span(p, 0.45, 0.9) * 0.7).toFixed(3)
+    lamps.forEach((l) => (l.style.opacity = glowing))
+    for (const tr of trails) {
+      tr.style.setProperty('--c', rgb(a.trail, b.trail, t))
+      tr.style.opacity = n('trailA').toFixed(3)
+    }
+  }
+  // Scroll sets where the plane is along its climb; time adds a slight bob and pitch.
+  function fly(now) {
+    const q = reduced ? 0.45 : span(p, 0.03, 0.97)
+    const x = lerp(PATH.x0, PATH.x1, q), y = lerp(PATH.y0, PATH.y1, q), t = now / 1000
+    plane.style.transform = `translate3d(${(ox + x * k).toFixed(1)}px, ${(oy + y * k).toFixed(1)}px, 0) rotate(${ANGLE.toFixed(2)}deg)`
+    plane.style.visibility = q > 0 && q < 1 ? 'visible' : 'hidden'
+    if (!reduced) craft.style.transform = `translate3d(0, ${(Math.sin(t * 0.9) * 1.6 * k).toFixed(2)}px, 0) rotate(${(Math.sin(t * 0.6 + 1) * 0.5).toFixed(2)}deg)`
+    const grown = clamp(((x - PATH.x0) * 0.9) / TRAIL_LEN)
+    for (const tr of trails) tr.style.transform = `scaleX(${grown.toFixed(4)})`
+    return q > 0 && q < 1
+  }
+
+  let running = false, visible = true, last = 0, lastExit = -1
+  function tick(now) {
+    const dt = Math.min(64, now - (last || now)); last = now
+    const goal = target()
+    // Ease the displayed progress toward the scroll position so wheel steps glide instead of jump.
+    p = reduced || Math.abs(goal - p) < 0.0005 ? goal : p + (goal - p) * (1 - Math.exp(-dt / 110))
+    if (p !== painted) { paint(); painted = p }
+    const exit = reduced ? 0 : Math.max(0, scrollY - top - travel)
+    if (exit !== lastExit) {
+      movers.forEach((m, j) => (m.style.transform = `translate3d(0, ${(exit * lags[j]).toFixed(1)}px, 0)`))
+      lastExit = exit
+    }
+    const flying = fly(now)
+    running = visible && (p !== goal || (flying && !reduced))
+    if (running) requestAnimationFrame(tick)
+    else last = 0
+  }
+  const wake = () => { if (!running && visible) { running = true; requestAnimationFrame(tick) } }
+
+  measure()
+  new ResizeObserver(() => { measure(); wake() }).observe(root)
+  addEventListener('resize', () => { measure(); wake() })
+  addEventListener('scroll', wake, { passive: true })
+  new IntersectionObserver(([e]) => { visible = e.isIntersecting; wake() }).observe(stage)
+  wake()
 }
