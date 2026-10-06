@@ -15,8 +15,9 @@ html, body { background: var(--list-bg); color: var(--list-fg); font-family: var
 .sky, .art, [data-light], .sun, .glow, .plane, .trail, .craft, .lamp, .title-shade { will-change: transform, opacity; }
 .sky { top: -100%; }
 .art { background: center bottom / cover no-repeat; }
-.sun, .glow { position: absolute; left: 0; top: 0; border-radius: 50%; }
-.glow { background: radial-gradient(closest-side, color-mix(in srgb, var(--c, #fff) 55%, transparent), transparent); }
+.sun, .glow { position: absolute; left: 0; top: 0; }
+.sun { border-radius: 50%; }
+.glow > * { will-change: opacity; }
 
 /* Airliner: the plane box sits on its anchor point; children are sized in measure() */
 .plane { position: absolute; left: 0; top: 0; width: 0; height: 0; }

@@ -127,9 +127,10 @@ function bridge(x1, x2, deck, towerH) {
   const t1 = x1 + (x2 - x1) * 0.22, t2 = x1 + (x2 - x1) * 0.78, top = deck - towerH
   for (let x = x1; x <= x2; x += 14) LIGHTS.city.push({ x, y: deck + 1, w: 2, h: 2, c: '#fff0c2', at: 0.7 + ((x - x1) / (x2 - x1)) * 0.12 })
   for (const tx of [t1, t2]) LIGHTS.city.push({ x: tx - 1.5, y: top + 1, w: 3, h: 3, c: '#ff4a3d', at: 0.66 })
-  return `<path fill="none" stroke="currentColor" stroke-width="3" d="M${x1} ${deck - 30}Q${(x1 + t1) / 2} ${deck - 20} ${t1} ${top}Q${(t1 + t2) / 2} ${deck - towerH * 0.25 + 30} ${t2} ${top}Q${(t2 + x2) / 2} ${deck - 20} ${x2} ${deck - 30}"/>
-    <rect x="${x1 - 10}" y="${deck}" width="${x2 - x1 + 20}" height="8"/>
-    <rect x="${t1 - 6}" y="${top}" width="12" height="${towerH + 40}"/><rect x="${t2 - 6}" y="${top}" width="12" height="${towerH + 40}"/>`
+  // Main cable: anchored at each end of the deck, over both tower tops, sagging to just above mid-deck.
+  return `<path fill="none" stroke="currentColor" stroke-width="2.5" d="M${x1} ${deck}Q${t1 - (t1 - x1) * 0.25} ${deck - towerH * 0.35} ${t1} ${top + 4}Q${(t1 + t2) / 2} ${deck + towerH * 0.55} ${t2} ${top + 4}Q${t2 + (x2 - t2) * 0.25} ${deck - towerH * 0.35} ${x2} ${deck}"/>
+    <rect x="${x1 - 14}" y="${deck}" width="${x2 - x1 + 28}" height="7"/>
+    <rect x="${t1 - 5}" y="${top}" width="10" height="${towerH + 40}"/><rect x="${t2 - 5}" y="${top}" width="10" height="${towerH + 40}"/>`
 }
 // North Shore homes: scattered on the lower slopes of the nearest ridge, below its skyline.
 function hillLights(seed, n, pts, x1, x2) {
@@ -150,7 +151,7 @@ const LAYERS = [
   { lag: 0.95, svg: ridgePath(ridgeLine(5, 430, [{ x: 200, h: 140, w: 140 }, { x: 1200, h: 200, w: 180 }, { x: 1500, h: 120, w: 100 }], 10)) },
   { lag: 0.8, svg: ridgePath(ridgeLine(9, 520, [...lions(620, 1.25), { x: 250, h: 120, w: 140 }, { x: 1250, h: 140, w: 180 }], 14)) },
   { lag: 0.62, svg: ridgePath(shore), lights: LIGHTS.hills, waves: 3 },
-  { lag: 0.45, svg: firs(17, 720, { hMin: 30, hMax: 60, gap: 14 }) + skyline(21, 720) + bridge(960, 1340, 690, 90), lights: LIGHTS.city, waves: 4 },
+  { lag: 0.45, svg: firs(17, 720, { hMin: 30, hMax: 60, gap: 14 }) + skyline(21, 720) + bridge(930, 1190, 690, 74), lights: LIGHTS.city, waves: 4 },
   { lag: 0.22, svg: firs(31, 820, { hMin: 70, hMax: 130, gap: 22 }) },
   { lag: 0, svg: firs(37, 900, { from: -30, to: 260, hMin: 260, hMax: 430, gap: 50 }) + firs(41, 900, { from: 1320, to: 1650, hMin: 260, hMax: 430, gap: 52 }) + `<rect x="-40" y="880" width="${W + 80}" height="40"/>` },
 ]
@@ -248,8 +249,9 @@ const LAMPS = [
 // Contrails from both engines: long soft wedges that grow from where the plane came in.
 const TRAILS = [[183, 72], [190, 91]]
 const TRAIL_LEN = 760 // scene units
-const PATH = { x0: -260, x1: 1880, y0: 118, y1: 52 }
-const ANGLE = (Math.atan2(PATH.y1 - PATH.y0, PATH.x1 - PATH.x0) * 180) / Math.PI
+// Flight path in scene x; its height is set from the title in measure() so it always passes just below it.
+const PATH = { x0: -260, x1: 1880, climb: 44 }
+const FIN_TOP = 67 // drawing units from the anchor up to the fin tip
 
 export function initScene(root) {
   const stage = root.querySelector('[data-stage]')
@@ -260,9 +262,11 @@ export function initScene(root) {
   let html = `<div class="layer" data-lag="1">
     ${KEYS.map((k, j) => `<div class="fill sky" data-key="${j}" style="background:linear-gradient(${k.skyTop} 45%, ${k.skyBot})"></div>`).join('')}
     <div class="fill art" data-stars style="background-image:${svgURL(stars)}"></div>
-    <div class="glow" data-glow></div><div class="sun" data-sun></div>
-  </div>
-  <div class="layer" data-lag="0.9">
+    <div class="glow" data-glow>${KEYS.map((k, j) => `<div class="fill" data-key="${j}" data-cross style="background:radial-gradient(closest-side, ${k.glow}8c, ${k.glow}00)"></div>`).join('')}</div>
+    <div class="sun" data-sun></div>
+  </div>`
+  // In front of the far ridges and behind the title.
+  const planeLayer = `<div class="layer" data-lag="0.75">
     <div class="plane" data-plane>
       ${TRAILS.map(() => '<div class="trail" data-trail></div>').join('')}
       <div class="craft" data-craft>${PLANE_SVG}
@@ -278,20 +282,20 @@ export function initScene(root) {
     const tones = RGB.map((c) => svgURL(l.svg, rgb(c.far, c.near, m)))
     html += `<div class="layer" data-lag="${l.lag}">${tones.map((url, j) => `<div class="fill art" data-key="${j}" style="background-image:${url}"></div>`).join('')}
       ${lw.map((g) => `<div class="fill art" data-light style="background-image:${g.url}"></div>`).join('')}</div>`
-    if (i === TITLE_AFTER) html += `<div class="title" data-lag="${(l.lag + LAYERS[i + 1].lag) / 2}">
+    if (i === TITLE_AFTER) html += planeLayer + `<div class="title" data-lag="${(l.lag + LAYERS[i + 1].lag) / 2}">
       <div class="title-shade" data-shade aria-hidden="true"><b>Jason Meng</b><p>Vancouver, BC</p></div>
       <h1>Jason Meng</h1><p>Vancouver, BC</p></div>`
   })
   stage.innerHTML = html
 
   const $ = (s) => [...stage.querySelectorAll(s)]
-  const keyed = $('[data-key]').map((el) => [el, Number(el.dataset.key)]), lights = $('[data-light]'), trails = $('[data-trail]'), lamps = $('.lamp')
+  const keyed = $('[data-key]').map((el) => [el, Number(el.dataset.key), el.hasAttribute('data-cross')]), lights = $('[data-light]'), trails = $('[data-trail]'), lamps = $('.lamp')
   const movers = $('[data-lag]'), lags = movers.map((m) => Number(m.dataset.lag))
   const [sun] = $('[data-sun]'), [glow] = $('[data-glow]'), [starsEl] = $('[data-stars]'), [shade] = $('[data-shade]')
-  const [plane] = $('[data-plane]'), [craft] = $('[data-craft]'), planeArt = craft.querySelector('svg')
+  const [plane] = $('[data-plane]'), [craft] = $('[data-craft]'), planeArt = craft.querySelector('svg'), [subtitle] = $('.title > p')
 
   // Layout is read only here (on resize), never inside the frame loop.
-  let top = 0, travel = 1, k = 1, ox = 0, oy = 0, painted = -1
+  let top = 0, travel = 1, k = 1, ox = 0, oy = 0, painted = -1, y0 = 0, y1 = 0, angle = 0
   function measure() {
     top = root.getBoundingClientRect().top + scrollY
     travel = Math.max(1, root.offsetHeight - innerHeight)
@@ -304,7 +308,10 @@ export function initScene(root) {
       const [tx, ty] = TRAILS[i], th = (8 + i * 4) * k
       Object.assign(tr.style, { width: `${TRAIL_LEN * k}px`, height: `${th}px`, left: `${(tx - ANCHOR[0]) * u - TRAIL_LEN * k}px`, top: `${(ty - ANCHOR[1]) * u - th / 2}px` })
     })
-    sun.style.width = sun.style.height = `${100 * k}px`
+    // Fin tip clears the subtitle at the end of the climb; the plane starts a little lower.
+    const below = subtitle.offsetParent.offsetTop + subtitle.offsetTop + subtitle.offsetHeight
+    y1 = below + 14 + FIN_TOP * u; y0 = y1 + PATH.climb * k
+    angle = (Math.atan2(y1 - y0, (PATH.x1 - PATH.x0) * k) * 180) / Math.PI
     glow.style.width = glow.style.height = `${440 * k}px`
     painted = -1
   }
@@ -316,12 +323,15 @@ export function initScene(root) {
     const [i, t] = segment(p), a = RGB[i], b = RGB[i + 1], A = KEYS[i], B = KEYS[i + 1]
     const n = (key) => lerp(A[key], B[key], t)
     // Copy i is fully on and copy i + 1 fades in over it: an exact colour blend, done by the compositor.
-    for (const [el, j] of keyed) el.style.opacity = j === i ? 1 : j === i + 1 ? t.toFixed(3) : 0
+    // Translucent glows fade out as the next fades in, so they don't stack up brighter.
+    for (const [el, j, cross] of keyed) el.style.opacity = j === i ? (cross ? 1 - t : 1).toFixed(3) : j === i + 1 ? t.toFixed(3) : 0
     const sx = ox + n('sunX') * k, sy = oy + n('sunY') * k
-    sun.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -50%) scale(${(n('sunR') / 50).toFixed(3)})`
+    // The disc is resized rather than scaled, so it is always drawn crisp at its real size.
+    const sr = n('sunR') * k
+    sun.style.width = sun.style.height = `${(sr * 2).toFixed(1)}px`
+    sun.style.transform = `translate3d(${(sx - sr).toFixed(1)}px, ${(sy - sr).toFixed(1)}px, 0)`
     sun.style.backgroundColor = rgb(a.sun, b.sun, t)
-    glow.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -50%)`
-    glow.style.setProperty('--c', rgb(a.glow, b.glow, t))
+    glow.style.transform = `translate3d(${(sx - 220 * k).toFixed(1)}px, ${(sy - 220 * k).toFixed(1)}px, 0)`
     starsEl.style.opacity = n('stars').toFixed(3)
     shade.style.opacity = (1 - p * 0.68).toFixed(3)
     lights.forEach((el, j) => (el.style.opacity = span(p, waves[j].at, waves[j].at + 0.035).toFixed(3)))
@@ -336,8 +346,8 @@ export function initScene(root) {
   // Scroll sets where the plane is along its climb; time adds a slight bob and pitch.
   function fly(now) {
     const q = reduced ? 0.45 : span(p, 0.03, 0.97)
-    const x = lerp(PATH.x0, PATH.x1, q), y = lerp(PATH.y0, PATH.y1, q), t = now / 1000
-    plane.style.transform = `translate3d(${(ox + x * k).toFixed(1)}px, ${(oy + y * k).toFixed(1)}px, 0) rotate(${ANGLE.toFixed(2)}deg)`
+    const x = lerp(PATH.x0, PATH.x1, q), t = now / 1000
+    plane.style.transform = `translate3d(${(ox + x * k).toFixed(1)}px, ${lerp(y0, y1, q).toFixed(1)}px, 0) rotate(${angle.toFixed(2)}deg)`
     plane.style.visibility = q > 0 && q < 1 ? 'visible' : 'hidden'
     if (!reduced) craft.style.transform = `translate3d(0, ${(Math.sin(t * 0.9) * 1.6 * k).toFixed(2)}px, 0) rotate(${(Math.sin(t * 0.6 + 1) * 0.5).toFixed(2)}deg)`
     const grown = clamp(((x - PATH.x0) * 0.9) / TRAIL_LEN)
